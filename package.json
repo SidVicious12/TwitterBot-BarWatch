@@ -1,0 +1,36 @@
+{
+  "name": "barwatch",
+  "version": "1.0.0",
+  "description": "Automated X/Twitter bot tracking Kim Kardashian's bar exam status",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node src/index.js --dry-run",
+    "verify-twitter": "node scripts/verify-twitter.js",
+    "verify-replicate": "node scripts/verify-replicate.js",
+    "health-check": "node scripts/health-check.js"
+  },
+  "keywords": [
+    "twitter",
+    "bot",
+    "automation",
+    "bar-exam",
+    "kim-kardashian"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "replicate": "^0.25.0",
+    "axios": "^1.6.2",
+    "cheerio": "^1.0.0-rc.12",
+    "dotenv": "^16.3.1",
+    "twitter-api-v2": "^1.15.2"
+  },
+  "devDependencies": {
+    "eslint": "^8.54.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
