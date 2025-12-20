@@ -35,11 +35,3 @@ jobs:
           DRY_RUN: false
           TIMEZONE: America/Los_Angeles
         run: npm start
-
-      - name: 📊 Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: barwatch-logs-${{ github.run_number }}
-          path: logs/
-          retention-days: 7
