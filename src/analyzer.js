@@ -169,18 +169,18 @@ export function getCountdownMessage() {
   const daysUntil = Math.ceil((examDate - today) / (1000 * 60 * 60 * 24));
 
   if (daysUntil <= 0) {
-    return 'Kim Kardashian\'s bar exam is happening now! 📚\nResults expected in 4-6 weeks.\n#KimKardashian #BarExam';
+    return 'Bar exam day! 📚 Results in 4-6 weeks.\n#KimKardashian #BarExam';
   }
 
   if (daysUntil <= 7) {
-    return `⏰ ${daysUntil} days until Kim Kardashian takes the bar exam!\nFebruary 2026 attempt coming soon.\n#KimKardashian #BarExam`;
+    return `⏰ ${daysUntil} days until bar exam!\n#KimKardashian #BarExam`;
   }
 
   if (daysUntil <= 30) {
-    return `Kim Kardashian's bar exam in ${daysUntil} days! 📚\nShe's preparing for February 2026.\n#KimKardashian #BarExam #Law`;
+    return `${daysUntil} days to bar exam 📚\n#KimKardashian #BarExam`;
   }
 
-  return 'Did Kim Kardashian pass the bar? Still waiting for news... 📚\nBar exam scheduled for February 2026\n#KimKardashian #BarExam #Law';
+  return `Bar exam: Feb 2026 📚\nNo news yet.\n#KimKardashian #BarExam`;
 }
 
 export default {
