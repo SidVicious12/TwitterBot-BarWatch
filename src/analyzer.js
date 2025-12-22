@@ -88,7 +88,21 @@ Guidelines for message:
     return result;
 
   } catch (error) {
-    console.error('❌ Replicate analysis failed:', error.message);
+    console.error('❌ Replicate analysis failed');
+    console.error('   Error message:', error.message);
+    console.error('   Status code:', error.response?.status || error.statusCode || 'N/A');
+    
+    if (error.response?.data) {
+      console.error('   Response data:', JSON.stringify(error.response.data, null, 2));
+    }
+    
+    if (error.data) {
+      console.error('   Error data:', JSON.stringify(error.data, null, 2));
+    }
+    
+    if (error.cause) {
+      console.error('   Cause:', error.cause);
+    }
 
     // Fallback: simple keyword detection
     return fallbackAnalysis(headlines);

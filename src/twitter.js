@@ -80,11 +80,27 @@ export async function postTweet(message) {
     };
 
   } catch (error) {
-    console.error('❌ Failed to post tweet:', error.message);
+    console.error('❌ Failed to post tweet');
+    console.error('   Error message:', error.message);
+    console.error('   Status code:', error.code || error.statusCode || 'N/A');
+    
+    if (error.data) {
+      console.error('   Response data:', JSON.stringify(error.data, null, 2));
+    }
+    
+    if (error.errors) {
+      console.error('   API errors:', JSON.stringify(error.errors, null, 2));
+    }
+    
+    if (error.response?.data) {
+      console.error('   Full response body:', JSON.stringify(error.response.data, null, 2));
+    }
 
     return {
       success: false,
       error: error.message,
+      errorCode: error.code || error.statusCode,
+      errorData: error.data || error.response?.data,
       message,
       timestamp: new Date().toISOString()
     };
@@ -113,10 +129,27 @@ export async function verifyCredentials() {
     };
 
   } catch (error) {
-    console.error('❌ Twitter credential verification failed:', error.message);
+    console.error('❌ Twitter credential verification failed');
+    console.error('   Error message:', error.message);
+    console.error('   Status code:', error.code || error.statusCode || 'N/A');
+    
+    if (error.data) {
+      console.error('   Response data:', JSON.stringify(error.data, null, 2));
+    }
+    
+    if (error.errors) {
+      console.error('   API errors:', JSON.stringify(error.errors, null, 2));
+    }
+    
+    if (error.response?.data) {
+      console.error('   Full response body:', JSON.stringify(error.response.data, null, 2));
+    }
+    
     return {
       success: false,
-      error: error.message
+      error: error.message,
+      errorCode: error.code || error.statusCode,
+      errorData: error.data || error.response?.data
     };
   }
 }

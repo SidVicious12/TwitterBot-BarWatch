@@ -65,12 +65,28 @@ async function scrapeSource(source) {
     };
 
   } catch (error) {
-    console.error(`❌ ${source.name} failed:`, error.message);
+    console.error(`❌ ${source.name} failed`);
+    console.error('   Error message:', error.message);
+    console.error('   URL:', error.config?.url || source.url);
+    console.error('   Status code:', error.response?.status || 'N/A');
+    
+    if (error.response?.data) {
+      console.error('   Response data:', typeof error.response.data === 'string' 
+        ? error.response.data.substring(0, 500) 
+        : JSON.stringify(error.response.data, null, 2));
+    }
+    
+    if (error.response?.headers) {
+      console.error('   Response headers:', JSON.stringify(error.response.headers, null, 2));
+    }
+    
     return {
       source: source.name,
       headlines: [],
       success: false,
       error: error.message,
+      statusCode: error.response?.status,
+      responseData: error.response?.data,
       timestamp: new Date().toISOString()
     };
   }
