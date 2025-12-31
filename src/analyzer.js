@@ -15,49 +15,43 @@ const replicate = new Replicate({
 export async function analyzeBarExamStatus(headlines) {
   console.log('🤖 Analyzing headlines with Replicate AI (GPT-5 Nano)...\n');
 
-  if (!headlines || headlines.length === 0) {
-    return {
-      status: 'NO_NEWS',
-      message: 'Did Kim Kardashian pass the bar? Still waiting for news... 📚\nBar exam scheduled for February 2026\n#KimKardashian #BarExam #Law',
-      confidence: 1.0,
-      shouldTweet: true
-    };
-  }
+  // Even if no headlines, we use LLM to generate a creative "waiting" tweet
+  const hasNews = headlines && headlines.length > 0;
+  const headlinesText = hasNews
+    ? headlines.map((h, i) => `${i + 1}. ${h}`).join('\n')
+    : "No recent news headlines found.";
 
-  const prompt = `You are analyzing news headlines to determine if Kim Kardashian has passed the California Bar Exam.
-
+  const prompt = `You are a social media manager for a dedicated Kim Kardashian Bar Exam tracker account.
+  
 CONTEXT:
-- Kim Kardashian failed the California bar exam in July 2025
-- She is retaking the bar exam in February 2026
-- Results typically come out 4-6 weeks after the exam
-- She passed the MPRE (ethics exam) in March 2025
+- Kim Kardashian failed the California bar exam in July 2025.
+- She is expected to retake the bar exam in February 2026.
+- Results typically come out 4-6 weeks after the exam.
+- Today is ${new Date().toLocaleDateString()}.
+- You have access to a vault of memes/images to attach.
 
 NEWS HEADLINES:
-${headlines.map((h, i) => `${i + 1}. ${h}`).join('\n')}
+${headlinesText}
 
 TASK:
-Analyze these headlines and determine:
-1. Has she PASSED the bar exam? (clear confirmation needed)
-2. Has she FAILED another attempt? (clear confirmation needed)
-3. Is there SIGNIFICANT NEWS about her bar exam journey?
-4. Or is this just old news/speculation?
+Determine if there is any REAL update.
+- If YES (Passed/Failed): Write a breaking news tweet.
+- If NO (No news/Old news): Write a creative, funny, or supportive "Still waiting" or "Study mode" tweet. **Make it different every time.**
 
-Respond in JSON format:
+OUTPUT JSON:
 {
   "status": "PASSED" | "FAILED" | "PENDING" | "NO_NEWS",
   "confidence": 0.0-1.0,
-  "reasoning": "brief explanation",
-  "shouldTweet": true/false,
-  "message": "tweet text if shouldTweet is true (max 280 chars)"
+  "shouldTweet": true,
+  "message": "The tweet text (max 280 chars). Use hashtags #KimKardashian #BarExam.",
+  "imageKeyword": "sad" | "studying" | "confident" | "funny" | "waiting"
 }
 
-Guidelines for message:
-- If PASSED: Congratulatory message with emoji
-- If FAILED: Supportive message about trying again
-- If PENDING: Update about waiting for results
-- If NO_NEWS: Don't tweet
-- Always include #KimKardashian #BarExam
-- Keep under 280 characters`;
+GUIDELINES:
+- Be witty or supportive.
+- VARY the "No News" tweets. Don't just say "No news yet". Mention the countdown, study vibes, or community support.
+- If NO_NEWS, status should be NO_NEWS.
+`;
 
   try {
     const output = await replicate.run(
@@ -66,7 +60,7 @@ Guidelines for message:
         input: {
           prompt: prompt,
           max_tokens: 1024,
-          temperature: 0.7
+          temperature: 0.9 // High temperature for variety
         }
       }
     );
@@ -75,115 +69,29 @@ Guidelines for message:
     console.log('📝 Replicate response:', content);
 
     // Parse JSON response
-    const result = JSON.parse(content);
+    // Sometimes LLMs add markdown code blocks, strip them
+    const jsonStr = content.replace(/```json/g, '').replace(/```/g, '').trim();
+    const result = JSON.parse(jsonStr);
 
     console.log(`\n✅ Analysis complete:`);
     console.log(`   Status: ${result.status}`);
-    console.log(`   Confidence: ${(result.confidence * 100).toFixed(0)}%`);
-    console.log(`   Should tweet: ${result.shouldTweet ? 'Yes' : 'No'}`);
-    if (result.shouldTweet) {
-      console.log(`   Message: ${result.message}\n`);
-    }
+    console.log(`   Message: ${result.message}\n`);
 
     return result;
 
   } catch (error) {
-    console.error('❌ Replicate analysis failed');
-    console.error('   Error message:', error.message);
-    console.error('   Status code:', error.response?.status || error.statusCode || 'N/A');
-    
-    if (error.response?.data) {
-      console.error('   Response data:', JSON.stringify(error.response.data, null, 2));
-    }
-    
-    if (error.data) {
-      console.error('   Error data:', JSON.stringify(error.data, null, 2));
-    }
-    
-    if (error.cause) {
-      console.error('   Cause:', error.cause);
-    }
-
-    // Fallback: simple keyword detection
-    return fallbackAnalysis(headlines);
-  }
-}
-
-/**
- * Fallback analysis using simple keyword detection
- */
-function fallbackAnalysis(headlines) {
-  console.log('⚠️  Using fallback analysis...\n');
-
-  const headlinesText = headlines.join(' ').toLowerCase();
-
-  // Check for "passed" keywords
-  if (headlinesText.includes('passed') || headlinesText.includes('attorney')) {
+    console.error('❌ Replicate analysis failed', error);
+    // Fallback if LLM fails
     return {
-      status: 'PASSED',
-      confidence: 0.7,
-      reasoning: 'Keywords suggest she passed',
+      status: 'NO_NEWS',
       shouldTweet: true,
-      message: '🎉 BREAKING: Kim Kardashian passed the bar! 👩‍⚖️\n#KimKardashian #BarExam #Lawyer'
+      message: 'Still waiting on bar exam updates! 📚 #KimKardashian #BarExam',
+      confidence: 1.0,
+      imageKeyword: 'waiting'
     };
   }
-
-  // Check for "failed" keywords
-  if (headlinesText.includes('failed') || headlinesText.includes('did not pass')) {
-    return {
-      status: 'FAILED',
-      confidence: 0.7,
-      reasoning: 'Keywords suggest she failed',
-      shouldTweet: true,
-      message: 'Update: Not this attempt, but she\'s committed to trying again. 💪\n#KimKardashian #BarExam'
-    };
-  }
-
-  // Check for exam-related news
-  if (headlinesText.includes('bar exam') || headlinesText.includes('studying')) {
-    return {
-      status: 'PENDING',
-      confidence: 0.6,
-      reasoning: 'General bar exam news found',
-      shouldTweet: true,
-      message: 'Kim Kardashian preparing for bar exam in February 2026! 📚\n#KimKardashian #BarExam #Law'
-    };
-  }
-
-  // No relevant news
-  return {
-    status: 'NO_NEWS',
-    confidence: 0.5,
-    reasoning: 'No significant bar exam news found',
-    shouldTweet: false,
-    message: null
-  };
-}
-
-/**
- * Gets a countdown message for the upcoming exam
- */
-export function getCountdownMessage() {
-  const examDate = new Date('2026-02-24'); // February 2026 bar exam
-  const today = new Date();
-  const daysUntil = Math.ceil((examDate - today) / (1000 * 60 * 60 * 24));
-
-  if (daysUntil <= 0) {
-    return 'Bar exam day! 📚 Results in 4-6 weeks.\n#KimKardashian #BarExam';
-  }
-
-  if (daysUntil <= 7) {
-    return `⏰ ${daysUntil} days until bar exam!\n#KimKardashian #BarExam`;
-  }
-
-  if (daysUntil <= 30) {
-    return `${daysUntil} days to bar exam 📚\n#KimKardashian #BarExam`;
-  }
-
-  return `Bar exam: Feb 2026 📚\nNo news yet.\n#KimKardashian #BarExam`;
 }
 
 export default {
-  analyzeBarExamStatus,
-  getCountdownMessage
+  analyzeBarExamStatus
 };

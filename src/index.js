@@ -6,9 +6,15 @@
  */
 
 import 'dotenv/config';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { scrapeAllSources } from './scraper.js';
-import { analyzeBarExamStatus, getCountdownMessage } from './analyzer.js';
-import { initTwitter, postTweet } from './twitter.js';
+import { analyzeBarExamStatus } from './analyzer.js';
+import { initTwitter, postTweet, uploadMedia } from './twitter.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MEMES_DIR = path.join(__dirname, '../assets/memes');
 
 /**
  * Main bot execution
@@ -31,34 +37,45 @@ async function runBarWatch() {
     console.log('📰 Step 2: Scrape News Sources\n');
     const scrapeResults = await scrapeAllSources();
 
-    // Step 3: Analyze with Claude AI
-    console.log('🧠 Step 3: Analyze with Claude AI\n');
-    let analysis;
+    // Step 3: Analyze with Replicate AI
+    console.log('🧠 Step 3: Analyze with Replicate AI\n');
 
-    if (scrapeResults.allHeadlines.length > 0) {
-      analysis = await analyzeBarExamStatus(scrapeResults.allHeadlines);
-    } else {
-      // No headlines found, use countdown message
-      console.log('⚠️  No headlines found, using countdown message\n');
-      analysis = {
-        status: 'NO_NEWS',
-        shouldTweet: true,
-        message: getCountdownMessage(),
-        confidence: 1.0
-      };
+    // We pass whatever headlines we found (or empty) to the analyzer
+    // It will handle the "No News" case dynamically
+    const analysis = await analyzeBarExamStatus(scrapeResults.allHeadlines);
+
+    // Step 4: Prepare Media (if needed)
+    console.log('🖼️ Step 4: Select Media\n');
+    let mediaId = null;
+
+    if (analysis.shouldTweet) {
+      // Pick a random meme/image if we are tweeting
+      if (fs.existsSync(MEMES_DIR)) {
+        const files = fs.readdirSync(MEMES_DIR).filter(file => /\.(png|jpg|jpeg|gif)$/i.test(file));
+        if (files.length > 0) {
+          const randomFile = files[Math.floor(Math.random() * files.length)];
+          const filePath = path.join(MEMES_DIR, randomFile);
+
+          console.log(`   Selected image: ${randomFile}`);
+          mediaId = await uploadMedia(filePath);
+        } else {
+          console.log('   No images found in assets/memes');
+        }
+      } else {
+        console.log('   assets/memes directory does not exist');
+      }
     }
 
-    // Step 4: Post tweet if needed
-    console.log('📤 Step 4: Post Tweet\n');
+    // Step 5: Post tweet if needed
+    console.log('📤 Step 5: Post Tweet\n');
 
     if (analysis.shouldTweet && analysis.message) {
-      const tweetResult = await postTweet(analysis.message);
+      const tweetResult = await postTweet(analysis.message, mediaId);
 
       // Log results
       console.log('📊 RESULTS\n');
       console.log('─'.repeat(60));
       console.log(`Status: ${analysis.status}`);
-      console.log(`Confidence: ${(analysis.confidence * 100).toFixed(0)}%`);
       console.log(`Tweet Posted: ${tweetResult.success ? 'YES' : 'NO'}`);
       if (tweetResult.tweetId) {
         console.log(`Tweet ID: ${tweetResult.tweetId}`);
@@ -70,33 +87,13 @@ async function runBarWatch() {
       process.exit(0);
 
     } else {
-      console.log('ℹ️  No significant news - skipping tweet\n');
-      console.log('📊 RESULTS\n');
-      console.log('─'.repeat(60));
-      console.log(`Status: ${analysis.status}`);
-      console.log(`Confidence: ${(analysis.confidence * 100).toFixed(0)}%`);
-      console.log(`Tweet Posted: NO (not significant enough)`);
-      console.log('─'.repeat(60));
-
-      console.log('\n✅ BarWatch completed (no tweet needed)\n');
+      console.log('ℹ️  Skipping tweet (shouldTweet = false)\n');
       process.exit(0);
     }
 
   } catch (error) {
     console.error('\n❌ ERROR:', error.message);
     console.error(error.stack);
-
-    // Try to post an error tweet (only if not in dry run)
-    if (process.env.DRY_RUN !== 'true') {
-      try {
-        await postTweet(
-          '⚠️ BarWatch bot encountered an issue. Working on a fix!\n#BarWatch #Status'
-        );
-      } catch (tweetError) {
-        console.error('❌ Could not post error tweet:', tweetError.message);
-      }
-    }
-
     process.exit(1);
   }
 }
@@ -117,25 +114,13 @@ Options:
 
 Environment Variables:
   TWITTER_API_KEY            Twitter API key
-  TWITTER_API_SECRET         Twitter API secret
-  TWITTER_ACCESS_TOKEN       Twitter access token
-  TWITTER_ACCESS_TOKEN_SECRET Twitter access token secret
-  CLAUDE_API_KEY             Claude API key
-  DRY_RUN                    Set to 'true' for dry run mode
-  TIMEZONE                   Timezone for logging (default: America/Los_Angeles)
-
-Examples:
-  npm start                  Run the bot normally
-  npm start -- --dry-run     Test without posting tweets
-  DRY_RUN=true npm start     Test using environment variable
-
-For more information, see README.md
+  ... (others) ...
   `);
   process.exit(0);
 }
 
 if (args.includes('--version') || args.includes('-v')) {
-  console.log('BarWatch v1.0.0');
+  console.log('BarWatch v1.1.0');
   process.exit(0);
 }
 

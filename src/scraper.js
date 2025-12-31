@@ -3,119 +3,61 @@ import * as cheerio from 'cheerio';
 
 /**
  * Web scraper for bar exam news
- * Searches multiple news sources for updates about Kim Kardashian's bar exam
+ * Uses Google News RSS feed for reliable updates about Kim Kardashian's bar exam
  */
 
-const NEWS_SOURCES = [
-  {
-    name: 'AP News',
-    url: 'https://apnews.com/search?q=kim+kardashian+bar+exam',
-    selector: '.Component-headline-0-2-152'
-  },
-  {
-    name: 'Reuters',
-    url: 'https://www.reuters.com/search/news?blob=kim+kardashian+bar+exam',
-    selector: '.search-result-title'
-  },
-  {
-    name: 'TMZ',
-    url: 'https://www.tmz.com/search/?q=kim+kardashian+bar+exam',
-    selector: '.search-item__title'
-  },
-  {
-    name: 'Variety',
-    url: 'https://variety.com/?s=kim+kardashian+bar+exam',
-    selector: '.c-title__link'
-  }
-];
+const RSS_URL = 'https://news.google.com/rss/search?q=Kim+Kardashian+bar+exam&hl=en-US&gl=US&ceid=US:en';
 
 /**
- * Scrapes a single news source
+ * Scrapes news from Google News RSS
  */
-async function scrapeSource(source) {
-  try {
-    console.log(`🔍 Scraping ${source.name}...`);
+export async function scrapeAllSources() {
+  console.log('🚀 Starting news scraping via Google News RSS...\n');
 
-    const response = await axios.get(source.url, {
+  try {
+    const response = await axios.get(RSS_URL, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; BarWatch/1.0; +https://github.com/barwatch)'
       },
       timeout: 10000
     });
 
-    const $ = cheerio.load(response.data);
+    // Parse XML/RSS with cheerio
+    const $ = cheerio.load(response.data, { xmlMode: true });
     const headlines = [];
+    const items = $('item');
 
-    $(source.selector).each((i, element) => {
-      if (i < 5) { // Limit to 5 headlines per source
-        const text = $(element).text().trim();
-        if (text && text.length > 10) {
-          headlines.push(text);
+    items.each((i, element) => {
+      if (i < 10) { // Get top 10
+        const title = $(element).find('title').text().trim();
+        const pubDate = $(element).find('pubDate').text().trim();
+        // Filter out very old news if needed, but for now just gather them
+        // Also filter out noise if titles are too short
+        if (title && title.length > 10) {
+          headlines.push(`${title} (${pubDate})`);
         }
       }
     });
 
-    console.log(`✅ ${source.name}: Found ${headlines.length} headlines`);
+    console.log(`✅ Google News RSS: Found ${headlines.length} headlines`);
 
     return {
-      source: source.name,
-      headlines,
+      allHeadlines: headlines,
       success: true,
       timestamp: new Date().toISOString()
     };
 
   } catch (error) {
-    console.error(`❌ ${source.name} failed`);
+    console.error('❌ RSS Scraping failed');
     console.error('   Error message:', error.message);
-    console.error('   URL:', error.config?.url || source.url);
-    console.error('   Status code:', error.response?.status || 'N/A');
-    
-    if (error.response?.data) {
-      console.error('   Response data:', typeof error.response.data === 'string' 
-        ? error.response.data.substring(0, 500) 
-        : JSON.stringify(error.response.data, null, 2));
-    }
-    
-    if (error.response?.headers) {
-      console.error('   Response headers:', JSON.stringify(error.response.headers, null, 2));
-    }
     
     return {
-      source: source.name,
-      headlines: [],
+      allHeadlines: [],
       success: false,
       error: error.message,
-      statusCode: error.response?.status,
-      responseData: error.response?.data,
       timestamp: new Date().toISOString()
     };
   }
-}
-
-/**
- * Scrapes all news sources concurrently
- */
-export async function scrapeAllSources() {
-  console.log('🚀 Starting news scraping...\n');
-
-  const results = await Promise.all(
-    NEWS_SOURCES.map(source => scrapeSource(source))
-  );
-
-  // Aggregate all headlines
-  const allHeadlines = results
-    .filter(r => r.success)
-    .flatMap(r => r.headlines);
-
-  console.log(`\n📊 Total headlines found: ${allHeadlines.length}`);
-
-  return {
-    results,
-    allHeadlines,
-    totalSources: NEWS_SOURCES.length,
-    successfulSources: results.filter(r => r.success).length,
-    timestamp: new Date().toISOString()
-  };
 }
 
 /**

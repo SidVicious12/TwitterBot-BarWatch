@@ -27,9 +27,39 @@ export function initTwitter() {
 }
 
 /**
- * Post a tweet
+ * Upload media to Twitter
  */
-export async function postTweet(message) {
+export async function uploadMedia(filePath) {
+  if (!filePath) return null;
+
+  // Dry run check
+  if (process.env.DRY_RUN === 'true') {
+    console.log(`🧪 DRY RUN: Simulating upload of ${filePath}`);
+    return 'mock_media_id_123';
+  }
+
+  try {
+    if (!twitterClient) {
+      initTwitter();
+    }
+
+    // Media upload uses v1.1 API
+    console.log(`📤 Uploading media: ${filePath}...`);
+    const mediaId = await twitterClient.v1.uploadMedia(filePath);
+    console.log(`✅ Media uploaded! ID: ${mediaId}\n`);
+
+    return mediaId;
+
+  } catch (error) {
+    console.error('❌ Failed to upload media', error.message);
+    return null;
+  }
+}
+
+/**
+ * Post a tweet (text + optional media)
+ */
+export async function postTweet(message, mediaId = null) {
   if (!message) {
     throw new Error('Tweet message is required');
   }
@@ -44,13 +74,14 @@ export async function postTweet(message) {
     console.log('🧪 DRY RUN MODE - Tweet not posted:\n');
     console.log('─'.repeat(50));
     console.log(message);
+    if (mediaId) console.log(`[Attached Media ID: ${mediaId}]`);
     console.log('─'.repeat(50));
     console.log(`\n✅ Dry run successful (${message.length} characters)\n`);
     return {
       success: true,
       dryRun: true,
       message,
-      length: message.length
+      tweetId: 'mock_tweet_id_123'
     };
   }
 
@@ -62,47 +93,34 @@ export async function postTweet(message) {
     console.log('📤 Posting tweet...\n');
     console.log('─'.repeat(50));
     console.log(message);
+    if (mediaId) console.log(`[With Media ID: ${mediaId}]`);
     console.log('─'.repeat(50));
 
-    const tweet = await twitterClient.v2.tweet(message);
+    // Construct tweet payload
+    const payload = { text: message };
+    if (mediaId) {
+      payload.media = { media_ids: [mediaId] }; // v2 format
+    }
+
+    const tweet = await twitterClient.v2.tweet(payload);
 
     console.log(`\n✅ Tweet posted successfully!`);
     console.log(`   Tweet ID: ${tweet.data.id}`);
-    console.log(`   Length: ${message.length} characters\n`);
 
     return {
       success: true,
       dryRun: false,
       tweetId: tweet.data.id,
       message,
-      length: message.length,
       timestamp: new Date().toISOString()
     };
 
   } catch (error) {
     console.error('❌ Failed to post tweet');
     console.error('   Error message:', error.message);
-    console.error('   Status code:', error.code || error.statusCode || 'N/A');
-    
-    if (error.data) {
-      console.error('   Response data:', JSON.stringify(error.data, null, 2));
-    }
-    
-    if (error.errors) {
-      console.error('   API errors:', JSON.stringify(error.errors, null, 2));
-    }
-    
-    if (error.response?.data) {
-      console.error('   Full response body:', JSON.stringify(error.response.data, null, 2));
-    }
-
     return {
       success: false,
-      error: error.message,
-      errorCode: error.code || error.statusCode,
-      errorData: error.data || error.response?.data,
-      message,
-      timestamp: new Date().toISOString()
+      error: error.message
     };
   }
 }
@@ -132,19 +150,19 @@ export async function verifyCredentials() {
     console.error('❌ Twitter credential verification failed');
     console.error('   Error message:', error.message);
     console.error('   Status code:', error.code || error.statusCode || 'N/A');
-    
+
     if (error.data) {
       console.error('   Response data:', JSON.stringify(error.data, null, 2));
     }
-    
+
     if (error.errors) {
       console.error('   API errors:', JSON.stringify(error.errors, null, 2));
     }
-    
+
     if (error.response?.data) {
       console.error('   Full response body:', JSON.stringify(error.response.data, null, 2));
     }
-    
+
     return {
       success: false,
       error: error.message,
@@ -157,5 +175,6 @@ export async function verifyCredentials() {
 export default {
   initTwitter,
   postTweet,
+  uploadMedia,
   verifyCredentials
 };
