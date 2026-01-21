@@ -6,43 +6,54 @@ import * as cheerio from 'cheerio';
  * Uses Google News RSS feed for reliable updates about Kim Kardashian's bar exam
  */
 
-const RSS_URL = 'https://news.google.com/rss/search?q=Kim+Kardashian+bar+exam&hl=en-US&gl=US&ceid=US:en';
+const BASE_RSS_URL = 'https://news.google.com/rss/search';
 
 /**
- * Scrapes news from Google News RSS
+ * Scrapes news from Google News RSS with multiple query variations
  */
 export async function scrapeAllSources() {
   console.log('🚀 Starting news scraping via Google News RSS...\n');
 
+  const queries = [
+    'Kim Kardashian bar exam',
+    'Kim Kardashian law student',
+    'Kim Kardashian baby bar',
+    'Kim Kardashian lawyer journey'
+  ];
+
+  const allHeadlines = new Set();
+
   try {
-    const response = await axios.get(RSS_URL, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; BarWatch/1.0; +https://github.com/barwatch)'
-      },
-      timeout: 10000
-    });
+    for (const query of queries) {
+      console.log(`   Searching for: "${query}"...`);
+      const url = `${BASE_RSS_URL}?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
 
-    // Parse XML/RSS with cheerio
-    const $ = cheerio.load(response.data, { xmlMode: true });
-    const headlines = [];
-    const items = $('item');
+      const response = await axios.get(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; BarWatch/1.0; +https://github.com/barwatch)'
+        },
+        timeout: 10000
+      });
 
-    items.each((i, element) => {
-      if (i < 10) { // Get top 10
-        const title = $(element).find('title').text().trim();
-        const pubDate = $(element).find('pubDate').text().trim();
-        // Filter out very old news if needed, but for now just gather them
-        // Also filter out noise if titles are too short
-        if (title && title.length > 10) {
-          headlines.push(`${title} (${pubDate})`);
+      // Parse XML/RSS with cheerio
+      const $ = cheerio.load(response.data, { xmlMode: true });
+      $('item').each((i, element) => {
+        if (i < 5) { // Top 5 per query
+          const title = $(element).find('title').text().trim();
+          const pubDate = $(element).find('pubDate').text().trim();
+
+          if (title && title.length > 10) {
+            allHeadlines.add(`${title} (${pubDate})`);
+          }
         }
-      }
-    });
+      });
+    }
 
-    console.log(`✅ Google News RSS: Found ${headlines.length} headlines`);
+    const headlinesArray = Array.from(allHeadlines);
+    console.log(`✅ Google News RSS: Found ${headlinesArray.length} unique headlines`);
 
     return {
-      allHeadlines: headlines,
+      allHeadlines: headlinesArray,
       success: true,
       timestamp: new Date().toISOString()
     };
@@ -50,7 +61,7 @@ export async function scrapeAllSources() {
   } catch (error) {
     console.error('❌ RSS Scraping failed');
     console.error('   Error message:', error.message);
-    
+
     return {
       allHeadlines: [],
       success: false,
