@@ -15,9 +15,9 @@ const replicate = new Replicate({
 // Caption structure types for anti-repetition
 const STRUCTURE_TYPES = ['observation', 'question', 'comparison', 'quote_riff'];
 
-// Forced hashtags
-const FORCED_HASHTAGS = ['#KimKardashian', '#BarExam'];
-const OPTIONAL_HASHTAGS = ['#LawSchool', '#RealityTV', '#CaliforniaBar', '#BarResults'];
+// Forced hashtags - always included
+const FORCED_HASHTAGS = ['#KimKardashian', '#BarWatch'];
+const OPTIONAL_HASHTAGS = ['#BarExam', '#LawSchool', '#CaliforniaBar', '#BarResults'];
 
 // Max retries for LLM
 const MAX_RETRIES = 3;
@@ -216,7 +216,7 @@ HARD RULES (MUST FOLLOW):
 3. Do NOT invent dates, times, or results.
 4. Do NOT use labels like "POV:" or "Insider:" in the text.
 5. Reference the image content: ${anchorList}
-6. End with: #KimKardashian #BarExam ${optionalTag}
+6. End with: #KimKardashian #BarWatch ${optionalTag}
 
 ${recentOpenings}
 

@@ -3,10 +3,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import Replicate from 'replicate';
 import https from 'https';
+import { enhanceImage, enhanceAndSmooth } from './imageEnhancer.js';
 
 /**
- * Image Fetcher - High-resolution image generation via Replicate FLUX
- * Generates bar exam themed images for tweets
+ * Image Fetcher - High-resolution image fetching and enhancement
+ * Priority: Scraped images (enhanced) > AI generation > Local memes
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -416,20 +417,39 @@ function downloadImage(url, destPath) {
 
 /**
  * Get or generate an image for tweeting
- * Priority: 1) Google Images scraper, 2) AI generation, 3) Local memes
+ * Priority: 1) Scraped + enhanced, 2) Scraped raw, 3) AI generation, 4) Local memes
+ * @param {Array} recentlyUsedIds - IDs to avoid
+ * @param {Object} options - { useGeneration, enhanceImages, scale }
  */
-export async function getImageForTweet(recentlyUsedIds = [], useGeneration = false) {
+export async function getImageForTweet(recentlyUsedIds = [], options = {}) {
+    const { useGeneration = false, enhanceImages = true, scale = 2 } = options;
+
     // Try Google Images scraper FIRST (real images)
     try {
         const { fetchRecentKimImage } = await import('./imageScraper.js');
-        const scrapedImage = await fetchRecentKimImage();
+        const scrapedImage = await fetchRecentKimImage({ enhance: enhanceImages, scale });
 
-        if (scrapedImage && !scrapedImage.isLowRes) {
-            console.log('   ✅ Using scraped image from Google');
+        if (scrapedImage) {
+            const status = scrapedImage.wasEnhanced ? 'enhanced' : 'raw';
+            console.log(`   ✅ Using ${status} scraped image from Google`);
             return scrapedImage;
         }
     } catch (error) {
         console.log(`   ⚠️ Scraping failed: ${error.message}`);
+    }
+
+    // Try to enhance a local meme if we have one
+    if (enhanceImages && process.env.REPLICATE_API_TOKEN) {
+        const localMeme = selectLocalMeme(recentlyUsedIds);
+        if (localMeme && localMeme.isLowRes) {
+            console.log('   Attempting to enhance local meme...');
+            try {
+                const enhanced = await enhanceImage(localMeme.path, { scale, faceEnhance: true });
+                return { ...enhanced, description: localMeme.description, wasEnhanced: true };
+            } catch {
+                console.log('   Enhancement failed, using original');
+            }
+        }
     }
 
     // Fallback to AI generation if enabled

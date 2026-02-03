@@ -45,10 +45,14 @@ async function runBarWatch() {
     const { scrapedItems, hasNewUpdate } = searchResults;
     console.log(`   New update detected: ${hasNewUpdate ? 'YES' : 'NO'}\n`);
 
-    // Step 3: Select image
+    // Step 3: Select image (with enhancement enabled)
     console.log('🖼️ Step 3: Select Image\n');
     const memory = loadMemory();
-    const selectedImage = await getImageForTweet(memory.usedImages || []);
+    const selectedImage = await getImageForTweet(memory.usedImages || [], {
+      enhanceImages: true,
+      scale: 2,
+      useGeneration: false
+    });
 
     let imageDescription = '';
     let imagePath = null;

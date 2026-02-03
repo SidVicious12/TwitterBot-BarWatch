@@ -4,24 +4,26 @@ import path from 'path';
 import https from 'https';
 import http from 'http';
 import { fileURLToPath } from 'url';
+import { enhanceImage } from './imageEnhancer.js';
 
 /**
  * Google Images Scraper for Kim Kardashian bar exam photos
+ * Enhanced: Attempts to get full-res images + Replicate enhancement
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCRAPED_DIR = path.join(__dirname, '../assets/scraped');
 
-// Search queries
+// Search queries - prioritize bar exam content
 const SEARCH_QUERIES = [
-    'Kim Kardashian bar exam',
-    'Kim Kardashian lawyer',
-    'Kim Kardashian studying law',
-    'Kim Kardashian meme bar exam'
+    'Kim Kardashian bar exam quote',
+    'Kim Kardashian bar exam interview',
+    'Kim Kardashian lawyer studying',
+    'Kim Kardashian law school'
 ];
 
 /**
- * Scrape Google Images
+ * Scrape Google Images - attempts to get full-resolution URLs
  */
 export async function scrapeGoogleImages(query, maxResults = 5) {
     console.log(`🔍 Searching Google Images: "${query}"...`);
@@ -34,60 +36,68 @@ export async function scrapeGoogleImages(query, maxResults = 5) {
     try {
         const page = await browser.newPage();
 
-        // Set user agent to avoid detection
         await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-        const searchUrl = `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(query)}&tbs=isz:l`;
+        // Request large images only
+        const searchUrl = `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(query)}&tbs=isz:l,iar:s`;
         await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 30000 });
 
-        // Wait for images
         await page.waitForSelector('img', { timeout: 10000 });
 
-        // Scroll to load more images
-        await page.evaluate(() => window.scrollBy(0, 500));
-        await new Promise(r => setTimeout(r, 1000));
+        // Scroll and wait for lazy loading
+        await page.evaluate(() => window.scrollBy(0, 800));
+        await new Promise(r => setTimeout(r, 1500));
 
-        // Extract image URLs from data attributes and src
+        // Click on first few images to get full-res URLs
         const images = await page.evaluate(() => {
             const results = [];
 
-            // Try multiple selector strategies
-            const imgElements = document.querySelectorAll('img[src*="encrypted"], img[data-src*="encrypted"], img[src*="gstatic"]');
-
+            // Strategy 1: Get data-src URLs (often higher quality)
+            const imgElements = document.querySelectorAll('img[data-src], img[src*="encrypted"]');
             for (const img of imgElements) {
-                const src = img.getAttribute('data-src') || img.getAttribute('src') || '';
+                const dataSrc = img.getAttribute('data-src');
+                const src = dataSrc || img.getAttribute('src') || '';
 
-                // Skip tiny thumbnails and icons
-                if (src.includes('encrypted-tbn') && src.length > 50) {
-                    results.push({
-                        url: src,
-                        alt: img.alt || '',
-                        width: img.naturalWidth || 200,
-                        height: img.naturalHeight || 200
-                    });
-                }
-            }
-
-            // Also check for larger images in divs
-            const divImages = document.querySelectorAll('[data-lpage] img, [jsname] img');
-            for (const img of divImages) {
-                const src = img.src || '';
-                if (src.startsWith('http') && !src.includes('logo') && !results.find(r => r.url === src)) {
+                if (src && src.length > 50 && !src.includes('logo')) {
                     results.push({
                         url: src,
                         alt: img.alt || '',
                         width: img.naturalWidth || 400,
-                        height: img.naturalHeight || 400
+                        height: img.naturalHeight || 400,
+                        isThumbnail: src.includes('encrypted-tbn')
                     });
                 }
             }
+
+            // Strategy 2: Look for full-size image URLs in page data
+            const scripts = document.querySelectorAll('script');
+            for (const script of scripts) {
+                const text = script.textContent || '';
+                const urlMatches = text.match(/https:\/\/[^"\s]+\.(?:jpg|jpeg|png|webp)/gi);
+                if (urlMatches) {
+                    for (const url of urlMatches) {
+                        if (!url.includes('encrypted-tbn') && !url.includes('gstatic') && !results.find(r => r.url === url)) {
+                            results.push({
+                                url: url,
+                                alt: '',
+                                width: 800,
+                                height: 800,
+                                isThumbnail: false
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Sort: prefer non-thumbnails
+            results.sort((a, b) => (a.isThumbnail ? 1 : 0) - (b.isThumbnail ? 1 : 0));
 
             return results;
         });
 
         await browser.close();
 
-        console.log(`   Found ${images.length} images`);
+        console.log(`   Found ${images.length} images (${images.filter(i => !i.isThumbnail).length} full-res)`);
         return images.slice(0, maxResults);
 
     } catch (error) {
@@ -129,9 +139,12 @@ function downloadImage(url, destPath) {
 }
 
 /**
- * Fetch a fresh Kim K image
+ * Fetch a fresh Kim K image with optional enhancement
+ * @param {Object} options - { enhance: boolean, scale: number }
  */
-export async function fetchRecentKimImage() {
+export async function fetchRecentKimImage(options = {}) {
+    const { enhance = true, scale = 2 } = options;
+
     console.log('📸 Fetching recent Kim Kardashian image...\n');
 
     if (!fs.existsSync(SCRAPED_DIR)) {
@@ -143,24 +156,43 @@ export async function fetchRecentKimImage() {
 
         if (images.length === 0) continue;
 
-        // Try to download each image until one works
         for (const img of images) {
             try {
                 const timestamp = Date.now();
-                const filename = `kim_${timestamp}.jpg`;
+                const ext = img.url.includes('.png') ? 'png' : 'jpg';
+                const filename = `kim_${timestamp}.${ext}`;
                 const localPath = path.join(SCRAPED_DIR, filename);
 
-                console.log(`   Downloading image...`);
+                console.log(`   Downloading: ${img.isThumbnail ? 'thumbnail' : 'full-res'}...`);
                 await downloadImage(img.url, localPath);
 
-                // Verify file exists and has content
                 const stats = fs.statSync(localPath);
-                if (stats.size < 5000) {
+                if (stats.size < 3000) {
                     fs.unlinkSync(localPath);
                     continue;
                 }
 
-                console.log(`   ✅ Saved: ${filename} (${stats.size} bytes)\n`);
+                console.log(`   ✅ Downloaded: ${filename} (${Math.round(stats.size / 1024)}KB)`);
+
+                // Enhance if enabled and image is small/thumbnail
+                const needsEnhancement = enhance && (img.isThumbnail || stats.size < 50000);
+
+                if (needsEnhancement && process.env.REPLICATE_API_TOKEN) {
+                    console.log('   Image needs enhancement, upscaling...\n');
+                    try {
+                        const enhanced = await enhanceImage(localPath, { scale, faceEnhance: true });
+                        return {
+                            ...enhanced,
+                            description: img.alt || query,
+                            originalUrl: img.url,
+                            isScraped: true,
+                            wasEnhanced: true
+                        };
+                    } catch (enhanceError) {
+                        console.log(`   Enhancement failed: ${enhanceError.message}`);
+                        console.log('   Using original image...\n');
+                    }
+                }
 
                 return {
                     id: filename,
@@ -170,11 +202,12 @@ export async function fetchRecentKimImage() {
                     width: img.width,
                     height: img.height,
                     isScraped: true,
-                    isLowRes: false
+                    isLowRes: img.isThumbnail,
+                    wasEnhanced: false
                 };
 
             } catch (error) {
-                console.log(`   Download failed, trying next...`);
+                console.log(`   Download failed: ${error.message}, trying next...`);
                 continue;
             }
         }
