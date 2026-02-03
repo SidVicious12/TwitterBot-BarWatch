@@ -134,7 +134,7 @@ function downloadImage(url, destPath) {
         protocol.get(url, (response) => {
             if (response.statusCode === 301 || response.statusCode === 302) {
                 file.close();
-                fs.unlinkSync(destPath);
+                try { fs.unlinkSync(destPath); } catch { }
                 return downloadImage(response.headers.location, destPath).then(resolve).catch(reject);
             }
 
@@ -152,6 +152,34 @@ function downloadImage(url, destPath) {
             reject(err);
         });
     });
+}
+
+/**
+ * Validate that a file is actually an image (not HTML/text)
+ */
+function isValidImage(filePath) {
+    try {
+        const buffer = fs.readFileSync(filePath, { length: 16 });
+        // Check for JPEG magic bytes (FF D8 FF)
+        if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+            return true;
+        }
+        // Check for PNG magic bytes (89 50 4E 47)
+        if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+            return true;
+        }
+        // Check for WebP (52 49 46 46 ... 57 45 42 50)
+        if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) {
+            return true;
+        }
+        // Check for GIF (47 49 46 38)
+        if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
+            return true;
+        }
+        return false;
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -194,7 +222,14 @@ export async function fetchRecentKimImage(options = {}) {
                     continue;
                 }
 
-                console.log(`   ✅ Downloaded: ${filename} (${Math.round(stats.size / 1024)}KB)`);
+                // Validate it's actually an image (not HTML error page)
+                if (!isValidImage(localPath)) {
+                    console.log(`   ❌ Invalid image (HTML/text), skipping...`);
+                    fs.unlinkSync(localPath);
+                    continue;
+                }
+
+                console.log(`   ✅ Downloaded valid image: ${filename} (${Math.round(stats.size / 1024)}KB)`);
 
                 // Enhance if enabled and image is small/thumbnail
                 const needsEnhancement = enhance && (img.isThumbnail || stats.size < 50000);
