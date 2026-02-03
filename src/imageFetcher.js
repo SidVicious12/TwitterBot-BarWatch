@@ -1,16 +1,33 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import Replicate from 'replicate';
+import https from 'https';
 
 /**
- * Image Fetcher - High-resolution image selection with content safety filters
- * Follows X/Twitter 4K specs and avoids recently used images
+ * Image Fetcher - High-resolution image generation via Replicate FLUX
+ * Generates bar exam themed images for tweets
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOCAL_MEMES_DIR = path.join(__dirname, '../assets/memes');
+const GENERATED_DIR = path.join(__dirname, '../assets/generated');
 
-// Image selection criteria
+// Initialize Replicate
+const replicate = new Replicate({
+    auth: process.env.REPLICATE_API_TOKEN
+});
+
+// Image generation prompts (bar exam themed, safe for work)
+const IMAGE_PROMPTS = [
+    "editorial photo of a woman in a white blazer studying law books at a desk, professional lighting, high resolution",
+    "meme style image of someone refreshing a results page on laptop, frustrated expression, office setting",
+    "editorial photo of legal documents and coffee on a desk, California bar exam prep materials, overhead shot",
+    "stylized illustration of a crystal ball with a law degree inside, mystical lighting, sarcastic tone",
+    "photo of someone dramatically staring at a phone screen waiting for news, professional attire, anxious expression",
+    "editorial style image of law books stacked high with a small figure climbing them, metaphor for struggle",
+    "professional photo of courtroom setting with empty chair, dramatic lighting, anticipation theme"
+];
 const IMAGE_CRITERIA = {
     minWidth: 1920,
     preferredWidth: 3840,
@@ -258,10 +275,168 @@ export function extractVisualAnchors(imageDescription) {
     return anchors.slice(0, 2); // Max 2 anchors
 }
 
+/**
+ * Generate a new image using Replicate FLUX model
+ * @param {string} customPrompt - Optional custom prompt, otherwise picks from IMAGE_PROMPTS
+ * @param {Array} recentlyUsedPromptIndices - Indices of recently used prompts to avoid
+ * @returns {Object} { path, description, width, height, isLowRes, isGenerated }
+ */
+export async function generateImage(customPrompt = null, recentlyUsedPromptIndices = []) {
+    console.log('🎨 Generating image via Replicate FLUX...\n');
+
+    // Ensure generated directory exists
+    if (!fs.existsSync(GENERATED_DIR)) {
+        fs.mkdirSync(GENERATED_DIR, { recursive: true });
+    }
+
+    // Select prompt
+    let prompt;
+    let promptIndex;
+
+    if (customPrompt) {
+        prompt = customPrompt;
+        promptIndex = -1;
+    } else {
+        // Pick a prompt that wasn't recently used
+        const availableIndices = IMAGE_PROMPTS
+            .map((_, i) => i)
+            .filter(i => !recentlyUsedPromptIndices.includes(i));
+
+        if (availableIndices.length === 0) {
+            // All used, pick random
+            promptIndex = Math.floor(Math.random() * IMAGE_PROMPTS.length);
+        } else {
+            promptIndex = availableIndices[Math.floor(Math.random() * availableIndices.length)];
+        }
+        prompt = IMAGE_PROMPTS[promptIndex];
+    }
+
+    console.log(`   Prompt: "${prompt.slice(0, 60)}..."`);
+
+    try {
+        // Call FLUX model on Replicate
+        const output = await replicate.run(
+            "black-forest-labs/flux-schnell",
+            {
+                input: {
+                    prompt: prompt,
+                    num_outputs: 1,
+                    aspect_ratio: "16:9",
+                    output_format: "png",
+                    output_quality: 90
+                }
+            }
+        );
+
+        // FLUX returns array of URLs
+        const imageUrl = Array.isArray(output) ? output[0] : output;
+
+        if (!imageUrl) {
+            throw new Error('No image URL returned from Replicate');
+        }
+
+        console.log(`   Generated: ${imageUrl.slice(0, 50)}...`);
+
+        // Download the image
+        const timestamp = Date.now();
+        const filename = `generated_${timestamp}.png`;
+        const localPath = path.join(GENERATED_DIR, filename);
+
+        await downloadImage(imageUrl, localPath);
+
+        // Get dimensions
+        const dimensions = getImageDimensions(localPath);
+
+        console.log(`   Saved: ${filename} (${dimensions.width}x${dimensions.height})\n`);
+
+        return {
+            id: filename,
+            path: localPath,
+            url: imageUrl,
+            description: prompt,
+            promptIndex,
+            width: dimensions.width,
+            height: dimensions.height,
+            isLowRes: isLowRes(dimensions.width, dimensions.height),
+            isGenerated: true
+        };
+
+    } catch (error) {
+        console.error('   ❌ Image generation failed:', error.message);
+
+        // Fallback to local meme
+        console.log('   Falling back to local meme...\n');
+        return selectLocalMeme([]);
+    }
+}
+
+/**
+ * Download an image from URL to local path
+ */
+function downloadImage(url, destPath) {
+    return new Promise((resolve, reject) => {
+        const file = fs.createWriteStream(destPath);
+
+        const request = (url.startsWith('https') ? https : require('http')).get(url, (response) => {
+            // Handle redirects
+            if (response.statusCode === 301 || response.statusCode === 302) {
+                file.close();
+                fs.unlinkSync(destPath);
+                return downloadImage(response.headers.location, destPath).then(resolve).catch(reject);
+            }
+
+            if (response.statusCode !== 200) {
+                file.close();
+                fs.unlinkSync(destPath);
+                return reject(new Error(`Failed to download: ${response.statusCode}`));
+            }
+
+            response.pipe(file);
+
+            file.on('finish', () => {
+                file.close();
+                resolve();
+            });
+        });
+
+        request.on('error', (err) => {
+            file.close();
+            fs.unlinkSync(destPath);
+            reject(err);
+        });
+
+        file.on('error', (err) => {
+            file.close();
+            fs.unlinkSync(destPath);
+            reject(err);
+        });
+    });
+}
+
+/**
+ * Get or generate an image for tweeting
+ * Tries to generate a new image, falls back to local memes
+ */
+export async function getImageForTweet(recentlyUsedIds = [], useGeneration = true) {
+    if (useGeneration && process.env.REPLICATE_API_TOKEN) {
+        try {
+            return await generateImage();
+        } catch (error) {
+            console.log('   Generation failed, using local fallback');
+        }
+    }
+
+    return selectLocalMeme(recentlyUsedIds);
+}
+
 export default {
     selectBestImage,
     selectLocalMeme,
     getLocalMemes,
     extractVisualAnchors,
-    IMAGE_CRITERIA
+    generateImage,
+    getImageForTweet,
+    downloadImage,
+    IMAGE_CRITERIA,
+    IMAGE_PROMPTS
 };

@@ -13,7 +13,7 @@ import { fileURLToPath } from 'url';
 // New modules
 import { searchForNews } from './webSearcher.js';
 import { generateCaption } from './captionGenerator.js';
-import { selectLocalMeme, extractVisualAnchors } from './imageFetcher.js';
+import { getImageForTweet, extractVisualAnchors } from './imageFetcher.js';
 import { loadMemory } from './memoryStore.js';
 
 // Twitter integration
@@ -48,7 +48,7 @@ async function runBarWatch() {
     // Step 3: Select image
     console.log('🖼️ Step 3: Select Image\n');
     const memory = loadMemory();
-    const selectedImage = selectLocalMeme(memory.usedImages || []);
+    const selectedImage = await getImageForTweet(memory.usedImages || []);
 
     let imageDescription = '';
     let imagePath = null;
