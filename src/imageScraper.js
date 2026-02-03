@@ -14,12 +14,18 @@ import { enhanceImage } from './imageEnhancer.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCRAPED_DIR = path.join(__dirname, '../assets/scraped');
 
-// Search queries - prioritize bar exam content
+// Search queries - prioritize PHOTOS of Kim (not text quote cards)
 const SEARCH_QUERIES = [
-    'Kim Kardashian bar exam quote',
-    'Kim Kardashian bar exam interview',
-    'Kim Kardashian lawyer studying',
-    'Kim Kardashian law school'
+    'Kim Kardashian bar exam photo',
+    'Kim Kardashian interview law',
+    'Kim Kardashian studying lawyer photo',
+    'Kim Kardashian bar exam face'
+];
+
+// Keywords that indicate text-only images (avoid these)
+const TEXT_ONLY_INDICATORS = [
+    'quote', 'text', 'meme text', 'typography', 'words only',
+    'motivational', 'inspirational quote'
 ];
 
 /**
@@ -59,12 +65,17 @@ export async function scrapeGoogleImages(query, maxResults = 5) {
                 const src = dataSrc || img.getAttribute('src') || '';
 
                 if (src && src.length > 50 && !src.includes('logo')) {
+                    const alt = (img.alt || '').toLowerCase();
+                    // Skip images that are likely text-only quote cards
+                    const isTextOnly = alt.includes('quote') || alt.includes('text') || 
+                                       alt.includes('meme') && !alt.includes('photo');
                     results.push({
                         url: src,
                         alt: img.alt || '',
                         width: img.naturalWidth || 400,
                         height: img.naturalHeight || 400,
-                        isThumbnail: src.includes('encrypted-tbn')
+                        isThumbnail: src.includes('encrypted-tbn'),
+                        isTextOnly: isTextOnly
                     });
                 }
             }
@@ -89,8 +100,13 @@ export async function scrapeGoogleImages(query, maxResults = 5) {
                 }
             }
 
-            // Sort: prefer non-thumbnails
-            results.sort((a, b) => (a.isThumbnail ? 1 : 0) - (b.isThumbnail ? 1 : 0));
+            // Sort: prefer non-thumbnails AND non-text-only images
+            results.sort((a, b) => {
+                // Penalize text-only images heavily
+                const aScore = (a.isThumbnail ? 1 : 0) + (a.isTextOnly ? 10 : 0);
+                const bScore = (b.isThumbnail ? 1 : 0) + (b.isTextOnly ? 10 : 0);
+                return aScore - bScore;
+            });
 
             return results;
         });
@@ -157,13 +173,19 @@ export async function fetchRecentKimImage(options = {}) {
         if (images.length === 0) continue;
 
         for (const img of images) {
+            // Skip text-only quote cards
+            if (img.isTextOnly) {
+                console.log(`   Skipping text-only image: ${img.alt?.slice(0, 30) || 'no alt'}...`);
+                continue;
+            }
+
             try {
                 const timestamp = Date.now();
                 const ext = img.url.includes('.png') ? 'png' : 'jpg';
                 const filename = `kim_${timestamp}.${ext}`;
                 const localPath = path.join(SCRAPED_DIR, filename);
 
-                console.log(`   Downloading: ${img.isThumbnail ? 'thumbnail' : 'full-res'}...`);
+                console.log(`   Downloading: ${img.isThumbnail ? 'thumbnail' : 'full-res'} photo...`);
                 await downloadImage(img.url, localPath);
 
                 const stats = fs.statSync(localPath);
