@@ -1,10 +1,11 @@
 import Replicate from 'replicate';
 import { loadMemory, addCaption, checkRepetition, hashSearchResults, updateSearchHash } from './memoryStore.js';
 import { extractVisualAnchors } from './imageFetcher.js';
+import { validateCaption, stripInventedDates, countSentences, explainRejections } from './validateCaption.js';
 
 /**
- * Caption Generator - Produces witty, snarky, image-aligned captions
- * ≤260 chars, non-repetitive, references visual content
+ * Caption Generator v2.1 - Hard rule enforcement
+ * 1-2 sentences max, no invented dates, image-aligned, ≤260 chars
  */
 
 const replicate = new Replicate({
@@ -12,11 +13,14 @@ const replicate = new Replicate({
 });
 
 // Caption structure types for anti-repetition
-const STRUCTURE_TYPES = ['pov', 'observation', 'question', 'statement', 'comparison', 'quote_riff'];
+const STRUCTURE_TYPES = ['observation', 'question', 'comparison', 'quote_riff'];
 
 // Forced hashtags
 const FORCED_HASHTAGS = ['#KimKardashian', '#BarExam'];
 const OPTIONAL_HASHTAGS = ['#LawSchool', '#RealityTV', '#CaliforniaBar', '#BarResults'];
+
+// Max retries for LLM
+const MAX_RETRIES = 3;
 
 /**
  * Generate a caption for the given inputs
@@ -24,9 +28,9 @@ const OPTIONAL_HASHTAGS = ['#LawSchool', '#RealityTV', '#CaliforniaBar', '#BarRe
 export async function generateCaption(inputs) {
     const {
         imageDescription,
-        imageCandidates,
         scrapedItems = [],
-        hasNewUpdate = false
+        hasNewUpdate = false,
+        isLowResImage = false
     } = inputs;
 
     console.log('✍️ Generating caption...\n');
@@ -39,22 +43,15 @@ export async function generateCaption(inputs) {
     const visualAnchors = extractVisualAnchors(imageDescription);
     console.log(`   Visual anchors: ${visualAnchors.length > 0 ? visualAnchors.join(', ') : 'none detected'}`);
 
+    // FACT GATING: Only use facts if they exist in scrapedItems
+    const chosenFact = scrapedItems.length > 0 ? scrapedItems[0] : null;
+    const hasFactFromBackend = chosenFact !== null;
+
+    console.log(`   Backend facts: ${hasFactFromBackend ? chosenFact.text : 'NONE (dates will be stripped)'}`);
+
     // Check if search results are new
     const searchHash = hashSearchResults(scrapedItems);
     const isNewSearch = updateSearchHash(memory, searchHash);
-
-    // Build context for LLM
-    const factsContext = scrapedItems.length > 0
-        ? scrapedItems.map(f => `- ${f.matchedFact || f.text} (${f.source})`).join('\n')
-        : 'No new facts available.';
-
-    const anchorsContext = visualAnchors.length > 0
-        ? `Image shows: ${visualAnchors.join(', ')}`
-        : 'Image description: ' + (imageDescription || 'generic Kim Kardashian image');
-
-    const recentContext = recentCaptions.slice(0, 5).length > 0
-        ? `AVOID THESE RECENT OPENINGS:\n${recentCaptions.slice(0, 5).map(c => `- "${c.split(/\s+/).slice(0, 5).join(' ')}..."`).join('\n')}`
-        : '';
 
     // Pick a structure to avoid repeating last one
     const availableStructures = STRUCTURE_TYPES.filter(s => s !== memory.lastStructure);
@@ -64,134 +61,165 @@ export async function generateCaption(inputs) {
     const optionalTag = selectOptionalHashtag(memory.hashtagCombos);
 
     const prompt = buildPrompt({
-        anchorsContext,
-        factsContext,
-        recentContext,
+        imageDescription,
+        visualAnchors,
+        chosenFact,
+        hasFactFromBackend,
+        recentCaptions: recentCaptions.slice(0, 5),
         hasNewUpdate: hasNewUpdate && isNewSearch,
         suggestedStructure,
         optionalTag,
-        visualAnchors
+        isLowResImage
     });
 
-    try {
-        // Call Replicate LLM
-        const output = await replicate.run(
-            "openai/gpt-5-nano",
-            {
-                input: {
-                    prompt,
-                    max_tokens: 512,
-                    temperature: 0.9
+    let attempts = [];
+    let validCaption = null;
+
+    // Try up to MAX_RETRIES times to get a valid caption
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            console.log(`   Attempt ${attempt}/${MAX_RETRIES}...`);
+
+            const output = await replicate.run(
+                "openai/gpt-5-nano",
+                {
+                    input: {
+                        prompt: attempt > 1 ? prompt + `\n\nPREVIOUS ATTEMPT REJECTED. BE SHORTER. MAX 2 SENTENCES.` : prompt,
+                        max_tokens: 256,
+                        temperature: 0.8 + (attempt * 0.1)
+                    }
                 }
+            );
+
+            const content = output.join('');
+            const result = parseResponse(content);
+
+            if (!result || !result.caption) {
+                attempts.push({ text: content, reason: 'parse_failed' });
+                continue;
             }
-        );
 
-        const content = output.join('');
-        console.log('   Raw LLM response received');
+            let caption = result.caption.trim();
 
-        // Parse response
-        const result = parseResponse(content);
+            // HARD VALIDATION
+            const validation = validateCaption(caption, {
+                maxChars: 260,
+                maxSentences: 2,
+                hasFactFromBackend
+            });
 
-        if (!result || !result.caption) {
-            throw new Error('Failed to parse LLM response');
+            if (!validation.ok) {
+                console.log(`   ❌ Rejected: ${validation.reason} - ${validation.detail}`);
+                attempts.push({ text: caption, reason: validation.reason, detail: validation.detail });
+
+                // If too long or has invented dates, try to fix
+                if (validation.reason === 'invented_date') {
+                    caption = stripInventedDates(caption);
+                    const recheck = validateCaption(caption, { maxChars: 260, maxSentences: 2, hasFactFromBackend: true });
+                    if (recheck.ok) {
+                        validCaption = caption;
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            // Caption passed validation
+            validCaption = caption;
+            break;
+
+        } catch (error) {
+            console.error(`   Attempt ${attempt} error:`, error.message);
+            attempts.push({ text: '', reason: 'api_error', detail: error.message });
         }
-
-        // Validate and fix caption
-        let caption = result.caption;
-
-        // Ensure under 260 chars
-        if (caption.length > 260) {
-            caption = truncateCaption(caption, 260);
-        }
-
-        // Check for repetition
-        const repetitionCheck = checkRepetition(memory, caption, {
-            metaphor: result.metaphor,
-            hashtagCombo: result.hashtags?.join(' '),
-            structure: result.structure || suggestedStructure
-        });
-
-        if (repetitionCheck.isRepetitive) {
-            console.log(`   ⚠️ Repetition detected: ${repetitionCheck.issues.join(', ')}`);
-            // Could retry here, but for now just log
-        }
-
-        // Save to memory
-        addCaption(memory, caption, {
-            metaphor: result.metaphor,
-            hashtagCombo: result.hashtags?.join(' '),
-            structure: result.structure || suggestedStructure,
-            imageId: result.imageId
-        });
-
-        console.log(`\n   ✅ Caption generated (${caption.length} chars)`);
-
-        return {
-            caption,
-            hashtags: result.hashtags || [...FORCED_HASHTAGS, optionalTag].filter(Boolean),
-            imageKeyword: result.imageKeyword || 'waiting',
-            structure: result.structure || suggestedStructure,
-            success: true
-        };
-
-    } catch (error) {
-        console.error('❌ Caption generation failed:', error.message);
-
-        // Fallback caption
-        const fallback = generateFallbackCaption(visualAnchors, hasNewUpdate);
-
-        return {
-            caption: fallback,
-            hashtags: FORCED_HASHTAGS,
-            imageKeyword: 'waiting',
-            structure: 'fallback',
-            success: false,
-            error: error.message
-        };
     }
+
+    // Debug: explain rejections
+    if (attempts.length > 0) {
+        console.log(`   Rejection reasons:`, explainRejections(attempts));
+    }
+
+    // Fallback if all attempts failed
+    if (!validCaption) {
+        console.log('   ⚠️ All attempts failed, using fallback');
+        validCaption = generateFallbackCaption(visualAnchors, isLowResImage, optionalTag);
+    }
+
+    // Final sentence count check
+    const finalSentences = countSentences(validCaption);
+    console.log(`\n   ✅ Caption generated (${validCaption.length} chars, ${finalSentences} sentences)`);
+
+    // Check for repetition
+    const repetitionCheck = checkRepetition(memory, validCaption, {
+        hashtagCombo: `${FORCED_HASHTAGS.join(' ')} ${optionalTag}`,
+        structure: suggestedStructure
+    });
+
+    if (repetitionCheck.isRepetitive) {
+        console.log(`   ⚠️ Repetition warning: ${repetitionCheck.issues.join(', ')}`);
+    }
+
+    // Save to memory
+    addCaption(memory, validCaption, {
+        hashtagCombo: `${FORCED_HASHTAGS.join(' ')} ${optionalTag}`,
+        structure: suggestedStructure
+    });
+
+    return {
+        caption: validCaption,
+        hashtags: [...FORCED_HASHTAGS, optionalTag],
+        structure: suggestedStructure,
+        sentenceCount: finalSentences,
+        charCount: validCaption.length,
+        rejectedAttempts: attempts.length,
+        success: true
+    };
 }
 
 /**
- * Build the LLM prompt
+ * Build the LLM prompt - NO DEFAULT DATES
  */
-function buildPrompt({ anchorsContext, factsContext, recentContext, hasNewUpdate, suggestedStructure, optionalTag, visualAnchors }) {
-    return `You are a witty, snarky social media manager for a Kim Kardashian Bar Exam tracker account. You are NOT supportive of Kim—you find the whole saga amusing and slightly absurd.
+function buildPrompt({ imageDescription, visualAnchors, chosenFact, hasFactFromBackend, recentCaptions, hasNewUpdate, suggestedStructure, optionalTag, isLowResImage }) {
 
-CONTEXT:
-- Kim Kardashian failed the California bar exam in July 2025 (her 4th attempt).
-- She's attempting again in February 2026.
-- Results expected: May 1, 2026, 5:00 PM PT.
-- Running jokes: psychics who said she'd pass, using ChatGPT, "mental breakdown," licensed PI.
-- Today is ${new Date().toLocaleDateString()} (${new Date().toLocaleDateString('en-US', { weekday: 'long' })}).
+    const anchorList = visualAnchors.length > 0
+        ? visualAnchors.join(', ')
+        : (imageDescription || 'Kim Kardashian meme');
 
-${anchorsContext}
+    const factInstruction = hasFactFromBackend
+        ? `USE THIS FACT: "${chosenFact.text}" (from ${chosenFact.source})`
+        : `NO FACTS AVAILABLE. Do NOT mention any dates, times, or specific results. Focus on humor/snark only.`;
 
-FRESH FACTS (use ONE if available):
-${factsContext}
+    const lowResNote = isLowResImage
+        ? `The image is LOW RESOLUTION (blurry). Acknowledge the pixels humorously.`
+        : '';
 
-${recentContext}
+    const recentOpenings = recentCaptions.length > 0
+        ? `AVOID these opening words: ${recentCaptions.map(c => `"${c.split(/\s+/).slice(0, 3).join(' ')}..."`).join(', ')}`
+        : '';
 
-YOUR TASK:
-${hasNewUpdate
-            ? 'There IS new news. Write a BREAKING-style caption with 🚨.'
-            : 'There is NO new news. Write a funny/snarky waiting/anticipation caption.'}
+    return `You write VERY SHORT, snarky tweets about Kim Kardashian's bar exam saga.
 
-RULES:
-1. Caption MUST reference something from the image: ${visualAnchors.length > 0 ? visualAnchors.join(' or ') : 'any visual element'}
-2. MAX 260 characters (CRITICAL - this is a hard limit)
-3. Tone: witty, snarky, non-supportive, slightly dramatic
-4. Use structure: "${suggestedStructure}" (pov=POV joke, observation=insider comment, question=rhetorical, comparison=like/as comparison, quote_riff=play on a quote)
-5. Include hashtags: #KimKardashian #BarExam${optionalTag ? ' ' + optionalTag : ''}
-6. Do NOT use these phrases: "still waiting", "tick tock", "any day now", "stay tuned"
-7. If image has quote text, riff on that quote
+IMAGE CONTENT: ${anchorList}
+${lowResNote}
 
-OUTPUT JSON:
-{
-  "caption": "The full tweet text including hashtags",
-  "metaphor": "key metaphor used or null",
-  "structure": "${suggestedStructure}",
-  "imageKeyword": "studying|crying|waiting|chaos|results"
-}`;
+${factInstruction}
+
+HARD RULES (MUST FOLLOW):
+1. MAXIMUM 2 SENTENCES. No more.
+2. MAXIMUM 260 characters total (including hashtags).
+3. Do NOT invent dates, times, or results.
+4. Do NOT use labels like "POV:" or "Insider:" in the text.
+5. Reference the image content: ${anchorList}
+6. End with: #KimKardashian #BarExam ${optionalTag}
+
+${recentOpenings}
+
+STYLE: ${suggestedStructure} - be snarky, amused, not supportive.
+
+${hasNewUpdate ? 'This IS breaking news. Use 🚨.' : 'No news. Be funny about the waiting.'}
+
+OUTPUT JSON ONLY:
+{"caption": "Your tweet here with hashtags", "structure": "${suggestedStructure}"}`;
 }
 
 /**
@@ -199,63 +227,49 @@ OUTPUT JSON:
  */
 function parseResponse(content) {
     try {
-        // Strip markdown code blocks if present
         const cleaned = content.replace(/```json/g, '').replace(/```/g, '').trim();
         return JSON.parse(cleaned);
     } catch {
-        // Try to extract caption from plain text
-        const lines = content.split('\n').filter(l => l.trim());
-        if (lines.length > 0) {
-            return { caption: lines[0].trim() };
+        // Extract first sentence if JSON fails
+        const match = content.match(/["']?caption["']?\s*:\s*["']([^"']+)["']/i);
+        if (match) {
+            return { caption: match[1] };
         }
         return null;
     }
 }
 
 /**
- * Truncate caption intelligently
- */
-function truncateCaption(caption, maxLength) {
-    if (caption.length <= maxLength) return caption;
-
-    // Find last space before limit
-    const truncated = caption.slice(0, maxLength - 3);
-    const lastSpace = truncated.lastIndexOf(' ');
-
-    if (lastSpace > maxLength - 50) {
-        return truncated.slice(0, lastSpace) + '...';
-    }
-
-    return truncated + '...';
-}
-
-/**
  * Select optional hashtag avoiding recent combos
  */
 function selectOptionalHashtag(recentCombos) {
-    // If last 2 combos had same optional tag, pick different one
-    if (recentCombos.length >= 2) {
+    if (recentCombos && recentCombos.length >= 2) {
         for (const tag of OPTIONAL_HASHTAGS) {
             if (!recentCombos[0]?.includes(tag) || !recentCombos[1]?.includes(tag)) {
                 return tag;
             }
         }
     }
-    // Random selection
     return OPTIONAL_HASHTAGS[Math.floor(Math.random() * OPTIONAL_HASHTAGS.length)];
 }
 
 /**
- * Generate fallback caption when LLM fails
+ * Generate fallback caption - guaranteed valid
  */
-function generateFallbackCaption(visualAnchors, hasNewUpdate) {
-    const anchor = visualAnchors[0] || 'the grind';
+function generateFallbackCaption(visualAnchors, isLowResImage, optionalTag) {
+    const anchor = visualAnchors[0] || 'this meme';
 
-    const fallbacks = [
-        `${anchor.charAt(0).toUpperCase() + anchor.slice(1)}. The saga continues. #KimKardashian #BarExam`,
-        `Another day, another ${anchor} moment. #KimKardashian #BarExam`,
-        `The ${anchor} says it all. #KimKardashian #BarExam`
-    ];
+    const fallbacks = isLowResImage
+        ? [
+            `The pixels are blurry but the cope is clear. #KimKardashian #BarExam ${optionalTag}`,
+            `Low-res image, high-res drama. #KimKardashian #BarExam ${optionalTag}`,
+            `Can't unsee ${anchor}, even at 144p. #KimKardashian #BarExam ${optionalTag}`
+        ]
+        : [
+            `${anchor.charAt(0).toUpperCase() + anchor.slice(1)} says it all. #KimKardashian #BarExam ${optionalTag}`,
+            `The ${anchor} energy is unmatched. #KimKardashian #BarExam ${optionalTag}`,
+            `Nobody does ${anchor} quite like this. #KimKardashian #BarExam ${optionalTag}`
+        ];
 
     return fallbacks[Math.floor(Math.random() * fallbacks.length)];
 }

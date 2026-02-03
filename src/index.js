@@ -52,11 +52,16 @@ async function runBarWatch() {
 
     let imageDescription = '';
     let imagePath = null;
+    let isLowResImage = false;
 
     if (selectedImage) {
       imagePath = selectedImage.path;
       imageDescription = selectedImage.description || '';
+      isLowResImage = selectedImage.isLowRes || false;
+
       console.log(`   Selected: ${selectedImage.id}`);
+      console.log(`   Resolution: ${selectedImage.width}x${selectedImage.height}`);
+      console.log(`   Low-res: ${isLowResImage ? 'YES ⚠️' : 'NO'}`);
       console.log(`   Description: ${imageDescription || 'none'}\n`);
     } else {
       console.log('   No image selected (will post text only)\n');
@@ -67,7 +72,8 @@ async function runBarWatch() {
     const captionResult = await generateCaption({
       imageDescription,
       scrapedItems,
-      hasNewUpdate
+      hasNewUpdate,
+      isLowResImage
     });
 
     if (!captionResult.success) {
@@ -75,7 +81,7 @@ async function runBarWatch() {
     }
 
     const caption = captionResult.caption;
-    console.log(`   Caption (${caption.length} chars): ${caption}\n`);
+    console.log(`   Final: ${caption}\n`);
 
     // Step 5: Upload media if we have an image
     console.log('📤 Step 5: Post Tweet\n');

@@ -117,7 +117,7 @@ function scoreImage(img, recentlyUsedIds) {
 }
 
 /**
- * Get local meme images from assets/memes folder
+ * Get local meme images from assets/memes folder with dimensions
  */
 export function getLocalMemes() {
     if (!fs.existsSync(LOCAL_MEMES_DIR)) {
@@ -128,12 +128,67 @@ export function getLocalMemes() {
     const files = fs.readdirSync(LOCAL_MEMES_DIR)
         .filter(file => /\.(png|jpg|jpeg|gif|webp)$/i.test(file));
 
-    return files.map(file => ({
-        id: file,
-        path: path.join(LOCAL_MEMES_DIR, file),
-        description: file.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
-        isLocal: true
-    }));
+    return files.map(file => {
+        const filePath = path.join(LOCAL_MEMES_DIR, file);
+        const dimensions = getImageDimensions(filePath);
+        return {
+            id: file,
+            path: filePath,
+            description: file.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '),
+            isLocal: true,
+            width: dimensions.width,
+            height: dimensions.height,
+            isLowRes: isLowRes(dimensions.width, dimensions.height)
+        };
+    });
+}
+
+/**
+ * Get image dimensions from file (basic PNG/JPEG header reading)
+ */
+export function getImageDimensions(filePath) {
+    try {
+        const buffer = fs.readFileSync(filePath);
+
+        // PNG: width at bytes 16-19, height at 20-23
+        if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+            const width = buffer.readUInt32BE(16);
+            const height = buffer.readUInt32BE(20);
+            return { width, height };
+        }
+
+        // JPEG: search for SOF0/SOF2 marker
+        if (buffer[0] === 0xFF && buffer[1] === 0xD8) {
+            let i = 2;
+            while (i < buffer.length - 8) {
+                if (buffer[i] === 0xFF) {
+                    const marker = buffer[i + 1];
+                    // SOF0 (0xC0) or SOF2 (0xC2)
+                    if (marker === 0xC0 || marker === 0xC2) {
+                        const height = buffer.readUInt16BE(i + 5);
+                        const width = buffer.readUInt16BE(i + 7);
+                        return { width, height };
+                    }
+                    const len = buffer.readUInt16BE(i + 2);
+                    i += 2 + len;
+                } else {
+                    i++;
+                }
+            }
+        }
+
+        return { width: 0, height: 0 };
+    } catch {
+        return { width: 0, height: 0 };
+    }
+}
+
+/**
+ * Check if image is low resolution
+ */
+export function isLowRes(width, height, minShortSide = 600) {
+    const shortSide = Math.min(width || 0, height || 0);
+    return shortSide < minShortSide;
 }
 
 /**
