@@ -1,26 +1,31 @@
 #!/usr/bin/env node
 
 /**
- * BarWatch - Bar Exam Tracker Bot
- * Main orchestrator that coordinates scraping, analysis, and tweeting
+ * BarWatch - Bar Exam Tracker Bot v2.0
+ * Refactored orchestrator: Search → Image → Caption → Post
  */
 
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { scrapeAllSources } from './scraper.js';
-import { analyzeBarExamStatus } from './analyzer.js';
+
+// New modules
+import { searchForNews } from './webSearcher.js';
+import { generateCaption } from './captionGenerator.js';
+import { selectLocalMeme, extractVisualAnchors } from './imageFetcher.js';
+import { loadMemory } from './memoryStore.js';
+
+// Twitter integration
 import { initTwitter, postTweet, uploadMedia } from './twitter.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MEMES_DIR = path.join(__dirname, '../assets/memes');
 
 /**
  * Main bot execution
  */
 async function runBarWatch() {
-  console.log('🎯 BarWatch Bot Starting...');
+  console.log('🎯 BarWatch Bot v2.0 Starting...');
   console.log('═'.repeat(60));
   console.log(`📅 Time: ${new Date().toLocaleString()}`);
   console.log(`🌍 Timezone: ${process.env.TIMEZONE || 'America/Los_Angeles'}`);
@@ -33,63 +38,71 @@ async function runBarWatch() {
     console.log('📱 Step 1: Initialize Twitter\n');
     initTwitter();
 
-    // Step 2: Scrape news sources
-    console.log('📰 Step 2: Scrape News Sources\n');
-    const scrapeResults = await scrapeAllSources();
+    // Step 2: Search for news (autonomous web search)
+    console.log('🔍 Step 2: Search for Bar Exam News\n');
+    const searchResults = await searchForNews();
 
-    // Step 3: Analyze with Replicate AI
-    console.log('🧠 Step 3: Analyze with Replicate AI\n');
+    const { scrapedItems, hasNewUpdate } = searchResults;
+    console.log(`   New update detected: ${hasNewUpdate ? 'YES' : 'NO'}\n`);
 
-    // We pass whatever headlines we found (or empty) to the analyzer
-    // It will handle the "No News" case dynamically
-    const analysis = await analyzeBarExamStatus(scrapeResults.allHeadlines);
+    // Step 3: Select image
+    console.log('🖼️ Step 3: Select Image\n');
+    const memory = loadMemory();
+    const selectedImage = selectLocalMeme(memory.usedImages || []);
 
-    // Step 4: Prepare Media (if needed)
-    console.log('🖼️ Step 4: Select Media\n');
+    let imageDescription = '';
+    let imagePath = null;
+
+    if (selectedImage) {
+      imagePath = selectedImage.path;
+      imageDescription = selectedImage.description || '';
+      console.log(`   Selected: ${selectedImage.id}`);
+      console.log(`   Description: ${imageDescription || 'none'}\n`);
+    } else {
+      console.log('   No image selected (will post text only)\n');
+    }
+
+    // Step 4: Generate caption
+    console.log('✍️ Step 4: Generate Caption\n');
+    const captionResult = await generateCaption({
+      imageDescription,
+      scrapedItems,
+      hasNewUpdate
+    });
+
+    if (!captionResult.success) {
+      console.warn('   ⚠️ Using fallback caption');
+    }
+
+    const caption = captionResult.caption;
+    console.log(`   Caption (${caption.length} chars): ${caption}\n`);
+
+    // Step 5: Upload media if we have an image
+    console.log('📤 Step 5: Post Tweet\n');
     let mediaId = null;
 
-    if (analysis.shouldTweet) {
-      // Pick a random meme/image if we are tweeting
-      if (fs.existsSync(MEMES_DIR)) {
-        const files = fs.readdirSync(MEMES_DIR).filter(file => /\.(png|jpg|jpeg|gif)$/i.test(file));
-        if (files.length > 0) {
-          const randomFile = files[Math.floor(Math.random() * files.length)];
-          const filePath = path.join(MEMES_DIR, randomFile);
-
-          console.log(`   Selected image: ${randomFile}`);
-          mediaId = await uploadMedia(filePath);
-        } else {
-          console.log('   No images found in assets/memes');
-        }
-      } else {
-        console.log('   assets/memes directory does not exist');
-      }
+    if (imagePath && fs.existsSync(imagePath)) {
+      console.log(`   Uploading image: ${path.basename(imagePath)}...`);
+      mediaId = await uploadMedia(imagePath);
     }
 
-    // Step 5: Post tweet if needed
-    console.log('📤 Step 5: Post Tweet\n');
+    // Step 6: Post the tweet
+    const tweetResult = await postTweet(caption, mediaId);
 
-    if (analysis.shouldTweet && analysis.message) {
-      const tweetResult = await postTweet(analysis.message, mediaId);
-
-      // Log results
-      console.log('📊 RESULTS\n');
-      console.log('─'.repeat(60));
-      console.log(`Status: ${analysis.status}`);
-      console.log(`Tweet Posted: ${tweetResult.success ? 'YES' : 'NO'}`);
-      if (tweetResult.tweetId) {
-        console.log(`Tweet ID: ${tweetResult.tweetId}`);
-      }
-      console.log('─'.repeat(60));
-
-      // Exit with success
-      console.log('\n✅ BarWatch completed successfully!\n');
-      process.exit(0);
-
-    } else {
-      console.log('ℹ️  Skipping tweet (shouldTweet = false)\n');
-      process.exit(0);
+    // Log results
+    console.log('\n📊 RESULTS\n');
+    console.log('─'.repeat(60));
+    console.log(`News Found: ${scrapedItems.length} facts`);
+    console.log(`New Update: ${hasNewUpdate ? 'YES' : 'NO'}`);
+    console.log(`Caption Length: ${caption.length} chars`);
+    console.log(`Tweet Posted: ${tweetResult.success ? 'YES' : 'NO'}`);
+    if (tweetResult.tweetId) {
+      console.log(`Tweet ID: ${tweetResult.tweetId}`);
     }
+    console.log('─'.repeat(60));
+
+    console.log('\n✅ BarWatch completed successfully!\n');
+    process.exit(0);
 
   } catch (error) {
     console.error('\n❌ ERROR:', error.message);
@@ -103,7 +116,7 @@ const args = process.argv.slice(2);
 
 if (args.includes('--help') || args.includes('-h')) {
   console.log(`
-BarWatch - Bar Exam Tracker Bot
+BarWatch - Bar Exam Tracker Bot v2.0
 
 Usage: npm start [options]
 
@@ -112,15 +125,18 @@ Options:
   --dry-run        Run without posting tweets
   --version, -v    Show version
 
-Environment Variables:
-  TWITTER_API_KEY            Twitter API key
-  ... (others) ...
+Features:
+  - Autonomous news search (Google News RSS)
+  - Tiered trusted sources (calbar.ca.gov, People, TMZ, etc.)
+  - AI-generated snarky captions (Replicate)
+  - Anti-repetition memory system
+  - High-res image selection with safety filters
   `);
   process.exit(0);
 }
 
 if (args.includes('--version') || args.includes('-v')) {
-  console.log('BarWatch v1.1.0');
+  console.log('BarWatch v2.0.0');
   process.exit(0);
 }
 
