@@ -99,7 +99,8 @@ export async function generateCaption(inputs) {
                 continue;
             }
 
-            let caption = result.caption.trim();
+            // Strip any hashtags from LLM output (we'll add forced ones later)
+            let caption = result.caption.trim().replace(/#\w+/g, '').replace(/\s+/g, ' ').trim();
 
             // HARD VALIDATION
             const validation = validateCaption(caption, {
@@ -165,12 +166,17 @@ export async function generateCaption(inputs) {
         structure: suggestedStructure
     });
 
+    // CRITICAL: Force hashtags to appear in caption
+    const finalCaption = `${validCaption} ${FORCED_HASHTAGS.join(' ')} ${optionalTag}`.trim();
+
+    console.log(`   With hashtags: ${finalCaption}`);
+
     return {
-        caption: validCaption,
+        caption: finalCaption,
         hashtags: [...FORCED_HASHTAGS, optionalTag],
         structure: suggestedStructure,
         sentenceCount: finalSentences,
-        charCount: validCaption.length,
+        charCount: finalCaption.length,
         rejectedAttempts: attempts.length,
         success: true
     };
@@ -254,21 +260,21 @@ function selectOptionalHashtag(recentCombos) {
 }
 
 /**
- * Generate fallback caption - guaranteed valid
+ * Generate fallback caption - guaranteed valid (NO hashtags, they are appended later)
  */
 function generateFallbackCaption(visualAnchors, isLowResImage, optionalTag) {
     const anchor = visualAnchors[0] || 'this meme';
 
     const fallbacks = isLowResImage
         ? [
-            `The pixels are blurry but the cope is clear. #KimKardashian #BarExam ${optionalTag}`,
-            `Low-res image, high-res drama. #KimKardashian #BarExam ${optionalTag}`,
-            `Can't unsee ${anchor}, even at 144p. #KimKardashian #BarExam ${optionalTag}`
+            `The pixels are blurry but the cope is crystal clear.`,
+            `Low-res image, high-res drama.`,
+            `Can't unsee ${anchor}, even at 144p.`
         ]
         : [
-            `${anchor.charAt(0).toUpperCase() + anchor.slice(1)} says it all. #KimKardashian #BarExam ${optionalTag}`,
-            `The ${anchor} energy is unmatched. #KimKardashian #BarExam ${optionalTag}`,
-            `Nobody does ${anchor} quite like this. #KimKardashian #BarExam ${optionalTag}`
+            `${anchor.charAt(0).toUpperCase() + anchor.slice(1)} says it all.`,
+            `The ${anchor} energy is unmatched.`,
+            `Nobody does ${anchor} quite like this.`
         ];
 
     return fallbacks[Math.floor(Math.random() * fallbacks.length)];

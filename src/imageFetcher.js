@@ -416,17 +416,34 @@ function downloadImage(url, destPath) {
 
 /**
  * Get or generate an image for tweeting
- * Tries to generate a new image, falls back to local memes
+ * Priority: 1) Google Images scraper, 2) AI generation, 3) Local memes
  */
-export async function getImageForTweet(recentlyUsedIds = [], useGeneration = true) {
+export async function getImageForTweet(recentlyUsedIds = [], useGeneration = false) {
+    // Try Google Images scraper FIRST (real images)
+    try {
+        const { fetchRecentKimImage } = await import('./imageScraper.js');
+        const scrapedImage = await fetchRecentKimImage();
+
+        if (scrapedImage && !scrapedImage.isLowRes) {
+            console.log('   ✅ Using scraped image from Google');
+            return scrapedImage;
+        }
+    } catch (error) {
+        console.log(`   ⚠️ Scraping failed: ${error.message}`);
+    }
+
+    // Fallback to AI generation if enabled
     if (useGeneration && process.env.REPLICATE_API_TOKEN) {
         try {
+            console.log('   Falling back to AI generation...');
             return await generateImage();
         } catch (error) {
-            console.log('   Generation failed, using local fallback');
+            console.log('   AI generation failed');
         }
     }
 
+    // Final fallback: local memes
+    console.log('   Using local meme fallback');
     return selectLocalMeme(recentlyUsedIds);
 }
 
