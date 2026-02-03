@@ -18,15 +18,16 @@ const replicate = new Replicate({
     auth: process.env.REPLICATE_API_TOKEN
 });
 
-// Image generation prompts (bar exam themed, safe for work)
+// Image generation prompts - Kim Kardashian bar exam themed, specific references
 const IMAGE_PROMPTS = [
-    "editorial photo of a woman in a white blazer studying law books at a desk, professional lighting, high resolution",
-    "meme style image of someone refreshing a results page on laptop, frustrated expression, office setting",
-    "editorial photo of legal documents and coffee on a desk, California bar exam prep materials, overhead shot",
-    "stylized illustration of a crystal ball with a law degree inside, mystical lighting, sarcastic tone",
-    "photo of someone dramatically staring at a phone screen waiting for news, professional attire, anxious expression",
-    "editorial style image of law books stacked high with a small figure climbing them, metaphor for struggle",
-    "professional photo of courtroom setting with empty chair, dramatic lighting, anticipation theme"
+    "glamorous woman in designer white blazer surrounded by law books looking overwhelmed, reality TV style, dramatic lighting, meme format",
+    "split image meme: top shows confident reality star, bottom shows 'California Bar Exam Results' webpage with fail notification, dark humor",
+    "stylized meme of a psychic with crystal ball showing 'You Will Pass' while reality shows 'Failed - Attempt 4', ironic contrast",
+    "magazine cover parody 'KEEPING UP WITH THE BAR EXAM' featuring stressed celebrity studying, satirical style",
+    "dramatic meme of someone refreshing calbar.ca.gov results page at 5PM, phone battery at 1%, champagne on ice, anxious energy",
+    "comic strip style: panel 1 confident pose with law books, panel 2 shocked face at results, panel 3 'see you in February', meme format",
+    "editorial parody of reality star transformation: left side glam photo shoot, right side buried under California bar exam study materials",
+    "meme format: glamorous woman doing dramatic interview confessional about bar exam struggles, Kardashian aesthetic, text overlay space"
 ];
 const IMAGE_CRITERIA = {
     minWidth: 1920,
