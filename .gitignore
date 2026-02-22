@@ -30,3 +30,6 @@ coverage/
 # Temporary files
 tmp/
 temp/
+
+# Composed images (generated at runtime)
+assets/composed/
